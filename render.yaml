@@ -1,0 +1,29 @@
+# Render Blueprint: deploys the FastAPI backend (New -> Blueprint -> pick this repo).
+services:
+  - type: web
+    name: agentforge-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL          # Supabase *Session pooler* URL (see DEPLOYMENT.md)
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY        # Fernet key; must stay the same forever or saved credentials become unreadable
+        sync: false
+      - key: CORS_ORIGINS          # your Vercel URL, e.g. https://agentforge.vercel.app
+        sync: false
+      - key: ACCESS_TOKEN_MINUTES
+        value: "1440"
+      - key: GROQ_API_KEY          # optional default keys for users who haven't added their own
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false

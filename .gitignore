@@ -1,0 +1,25 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# node
+node_modules/
+frontend/dist/
+
+# generated files (PDFs/PPTX made by agents)
+backend/files/*
+!backend/files/.gitkeep
+
+# editor / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
