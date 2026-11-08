@@ -1,5 +1,5 @@
 import { Component, Fragment, useEffect, useRef, useState } from "react";
-import { api, stream, BASE } from "./api";
+import { api, stream, BASE, setOnSlow } from "./api";
 import { Icon } from "./icons";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -60,7 +60,12 @@ export default function App() {
     setToasts((t) => [...t, { id, msg, kind }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
   };
-  const toastEl = <div className="toasts">{toasts.map((t) => <div key={t.id} className={"toast " + t.kind}>{t.msg}</div>)}</div>;
+  const [waking, setWaking] = useState(false);
+  useEffect(() => { setOnSlow(setWaking); return () => { setOnSlow(() => {}); }; }, []);
+  const toastEl = <>
+    {waking && <div className="wake" role="status"><span className="spin" />
+      <div><b>Server is waking up…</b><span>This demo runs on Render's free tier, which sleeps when idle. The first request can take up to a minute.</span></div></div>}
+    <div className="toasts">{toasts.map((t) => <div key={t.id} className={"toast " + t.kind}>{t.msg}</div>)}</div></>;
   if (!tok) return <>{toastEl}<Auth done={(t) => { localStorage.setItem("t", t); setTok(t); }} /></>;
   const Page = { Dashboard, Agents, Chat, Credentials, "MCP Servers": MCP, Approvals, History }[page];
   return (
@@ -104,6 +109,7 @@ function Auth({ done }) {
         <div className="brand light"><span className="mark">AF</span>AgentForge</div>
         <h1>Create. Connect. Automate.</h1>
         <p>Build AI agents with your own tools, connect services over MCP, and approve every sensitive action before it runs.</p>
+        <p className="free-note">Hosted on a free tier: if the app has been idle, the first sign-in can take up to a minute while the server wakes up.</p>
       </div>
       <form className="auth-card" onSubmit={submit}>
         <h2>{reg ? "Create your account" : "Sign in"}</h2>

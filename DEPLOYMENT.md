@@ -1,176 +1,144 @@
-# Deploying AgentForge (free tier)
+# Deploying AgentForge on Render (free)
+
+AgentForge deploys as **one Render web service**. The FastAPI backend also serves the built React frontend, so everything lives at one URL. There's no CORS setup and no second host.
 
 ```
- Browser ──► Vercel (React/Vite frontend) ──HTTPS──► Render (FastAPI backend) ──► Supabase (Postgres)
-                                                          │
-                                                          └──► Groq / Gemini / Tavily / Gmail / Telegram / MCP servers
+ Browser ──► Render: agentforge.onrender.com ──► Supabase (Postgres)
+              ├─ /            React app (frontend/dist)
+              ├─ /api/v1/...  FastAPI
+              ├─ /files/...   generated PDFs / PPTX
+              └─ /docs        Swagger UI
+                     │
+                     └──► Groq / Gemini / Tavily / Gmail / Telegram / MCP servers
 ```
 
-| Part     | Host     | Folder      | Config file                 |
-|----------|----------|-------------|-----------------------------|
-| Database | Supabase | –           | –                           |
-| Backend  | Render   | `backend/`  | `render.yaml` (repo root)   |
-| Frontend | Vercel   | `frontend/` | `frontend/vercel.json`      |
-
-All three have free tiers. The order matters: **Supabase → Render → Vercel → back to Render (CORS)**.
+| Part     | Host     | Config                    |
+|----------|----------|---------------------------|
+| Database | Supabase | –                         |
+| App      | Render   | `render.yaml` (repo root) |
 
 ---
 
-## 0. Prerequisites
-
-- A GitHub account, plus free accounts on [Supabase](https://supabase.com), [Render](https://render.com) and [Vercel](https://vercel.com). Sign in to Render and Vercel with GitHub.
-- Git installed locally.
-
 ## 1. Push the code to GitHub
 
-From the project root (`No-Code-AI-Agent/`):
+1. Create an **empty** repo on github.com (no README, .gitignore or license).
+2. From the project root:
 
 ```bash
-git init
 git add .
-git status            # CHECK: no .env files, no node_modules, no dist in the list
-git commit -m "AgentForge: no-code AI agent platform"
-git branch -M main
-git remote add origin https://github.com/<your-username>/agentforge.git
+git commit -m "your message"
+git remote add origin https://github.com/<your-username>/<repo>.git   # first time only
 git push -u origin main
 ```
 
-Create the empty repo on GitHub first (no README, to avoid a merge conflict).
+`.gitignore` already excludes `.env`, `node_modules/`, `frontend/dist/`, `__pycache__/` and generated files.
+Check `git status` before committing: no `.env` should be listed.
 
-> `.gitignore` already excludes `.env`, `node_modules/`, `frontend/dist/`, `__pycache__/` and generated files.
-> If a secret ever gets committed, **rotate it** (deleting the file in a later commit does not remove it from history).
-> The Supabase password and Groq key used during development were shared in plain text, so rotate them before going public:
-> Supabase → Project Settings → Database → Reset password, and Groq console → API Keys → revoke and create a new one.
+> 🔐 The Supabase password and Groq key used during development were shared in plain text. Rotate them before the repo is public:
+> - Supabase → Project Settings → Database → *Reset database password*
+> - console.groq.com → API Keys → revoke the old key and create a new one
 
 ## 2. Database: Supabase
 
-You can reuse your existing project. Tables are created automatically when the backend starts.
+You can reuse your existing project. Tables (app data, LangGraph checkpoints, long-term memory store) are created automatically on startup.
 
 1. Supabase dashboard → your project → **Connect** (top bar).
-2. Copy the **Session pooler** connection string (port `5432`, host `aws-0-<region>.pooler.supabase.com`, user `postgres.<project-ref>`).
-3. Replace `[YOUR-PASSWORD]` with your database password.
+2. Copy the **Session pooler** string and replace `[YOUR-PASSWORD]`:
+   ```
+   postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+   ```
 
-> ⚠️ **Use the Session pooler, not the "Direct connection".**
-> The direct host (`db.<ref>.supabase.co`) is IPv6-only, and Render can't reach IPv6, so the deploy fails with a connection error.
-> Don't use the *Transaction* pooler (port 6543) either: the LangGraph checkpointer needs session mode.
+> ⚠️ **Must be the Session pooler.**
+> - The *Direct connection* host (`db.<ref>.supabase.co`) is IPv6-only, and Render can't reach it.
+> - The *Transaction* pooler (port 6543) breaks the LangGraph checkpointer.
+>
+> If your password has special characters (`@ # / ? %`), URL-encode them (`@` → `%40`).
 
-It should look like this:
-```
-postgresql://postgres.abcdefghijklmnop:YOUR_PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
-```
+## 3. Deploy on Render
 
-If the password contains special characters (`@ # / ? %`), URL-encode them (e.g. `@` → `%40`).
-
-## 3. Backend: Render
-
-### Option A: Blueprint (uses `render.yaml`, recommended)
-
-1. Render dashboard → **New → Blueprint** → select your GitHub repo.
-2. Render reads `render.yaml` and creates the service **agentforge-api** (Python, free plan, root dir `backend`).
-3. It asks for the values marked `sync: false`:
+1. Sign in to [render.com](https://render.com) with GitHub.
+2. **New → Blueprint** → select your repo. Render reads `render.yaml` and proposes one service: **agentforge** (free plan).
+3. Fill in the values it asks for:
 
 | Variable         | Value |
 |------------------|-------|
 | `DATABASE_URL`   | Session pooler string from step 2 |
-| `ENCRYPTION_KEY` | Output of `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Reuse the one in your local `.env`** if you want credentials already saved in Supabase to keep working. |
-| `CORS_ORIGINS`   | Put `http://localhost:5173` for now; you'll update it after step 4 |
-| `GROQ_API_KEY`   | Optional default key (users without their own key use this) |
+| `ENCRYPTION_KEY` | **The same value as in your local `backend/.env`**, so credentials already saved in Supabase stay readable. For a fresh setup: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `GROQ_API_KEY`   | Optional default key for users who haven't added their own |
 | `GEMINI_API_KEY` | Optional |
-| `TAVILY_API_KEY` | Optional (web search default) |
+| `TAVILY_API_KEY` | Optional (default key for web search) |
 
-`SECRET_KEY` is generated automatically and `PYTHON_VERSION` is pinned to 3.12.
+`SECRET_KEY` is generated for you; Python 3.12 and Node 20 are pinned.
 
-4. Click **Apply**. The first build takes about 3–5 minutes.
+4. Click **Apply**. The build takes about 4–6 minutes: it builds the React app, then installs the Python packages.
 
-### Option B: Manual web service
-
-**New → Web Service** → pick the repo, then:
-- Root Directory: `backend`
-- Runtime: Python 3
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `python run.py`
-- Health Check Path: `/health`
-- Environment: the variables above, plus `PYTHON_VERSION=3.12.8` and a random `SECRET_KEY`.
+What the blueprint runs:
+```
+build:  cd frontend && npm ci && npm run build && cd ../backend && pip install -r requirements.txt
+start:  cd backend && python run.py          (listens on Render's $PORT)
+health: /health
+```
 
 ### Verify
 
-Open `https://agentforge-api.onrender.com/health` (use your own URL from the Render dashboard). You should see:
-```json
-{"status":"ok"}
-```
-API docs are at `/docs`. In the Render **Logs** tab you should see `Application startup complete`.
+- `https://<your-service>.onrender.com/health` → `{"status":"ok"}`
+- `https://<your-service>.onrender.com/` → AgentForge sign-in page
+- `https://<your-service>.onrender.com/docs` → API docs
 
-## 4. Frontend: Vercel
+## 4. Smoke test
 
-1. Vercel dashboard → **Add New → Project** → import the same GitHub repo.
-2. **Root Directory:** click *Edit* and choose `frontend`. Vercel then detects Vite from `vercel.json`.
-3. **Environment Variables:**
-
-| Name           | Value |
-|----------------|-------|
-| `VITE_API_URL` | Your Render URL, e.g. `https://agentforge-api.onrender.com` (no trailing slash) |
-
-4. Click **Deploy**. You get a URL like `https://agentforge-xyz.vercel.app`.
-
-> `VITE_API_URL` is baked in at **build time**. If you change it later, redeploy (Deployments → ⋯ → Redeploy).
-
-## 5. Connect them: CORS
-
-The backend only accepts browser requests from origins listed in `CORS_ORIGINS`.
-
-Render → agentforge-api → **Environment** → set:
-```
-CORS_ORIGINS=https://agentforge-xyz.vercel.app,http://localhost:5173
-```
-Save; Render redeploys automatically. Use the exact Vercel URL: `https://`, no trailing slash. Add your custom domain too if you use one.
-
-## 6. Smoke test
-
-1. Open the Vercel URL → **Create an account** → you land on the dashboard.
-2. **Agents → New agent**. Pick Groq. The API key field is optional if you set `GROQ_API_KEY` on Render.
-3. Enable **Web Search**, save, then open **Chat** and ask something that needs a search.
-4. Check the **Graph** button (LangGraph diagram) and **History** (tool executions).
-5. Ask the agent to send a Telegram message to see the **Approval** card (human-in-the-loop).
+1. Open the URL → **Create an account**.
+2. **Agents → New agent** → provider Groq. The key is optional if `GROQ_API_KEY` is set. Enable **Web Search** → Save.
+3. **Chat** → ask something that needs a search; tool steps show as "✓ Used web_search".
+4. Open **Graph** to see the agent's LangGraph, and **History** to see tool executions.
+5. Ask it to send a Telegram message to see the **Approval** card (human-in-the-loop).
+6. Tell it "remember my name is …", start a **New chat**, and ask your name (long-term memory).
 
 ---
 
-## Free-tier behaviour to know about
+## Free-tier behaviour
 
 | Thing | What happens | What to do |
 |-------|--------------|------------|
-| **Render cold start** | Free services sleep after 15 min idle; the first request takes ~30–60 s | Open `/health` a minute before a demo, or ping it with a free uptime monitor (e.g. UptimeRobot every 10 min) |
-| **Generated files** (PDF/PPTX) | Stored on Render's local disk, which is wiped on every redeploy or restart | Fine for demos; for permanent files use Supabase Storage |
-| **Groq free limits** | ~8k tokens/minute and 200k tokens/day per model | The app already trims context and caps tool calls; for heavy use, switch the agent to Gemini or add a paid key |
-| **Supabase free** | Projects pause after ~1 week of no activity | Unpause from the dashboard; data is kept |
-| **SSE streaming** | Works on Render; the frontend calls Render directly (not through a Vercel proxy), so tokens stream live | – |
+| **Sleep / cold start** | The service sleeps after 15 min idle. The next visit shows Render's loading screen for ~30–60 s. Inside the app, any request slower than 3 s shows a *"Server is waking up…"* banner, and the sign-in page mentions the free tier. | Open the URL a minute before a demo, or ping `/health` every 10 min with a free monitor (e.g. UptimeRobot) |
+| **Generated files** | PDFs/PPTX are kept on local disk, which is wiped on every redeploy or restart | Fine for demos; use Supabase Storage for permanent files |
+| **Groq free limits** | ~8k tokens/minute and ~200k tokens/day per model | The app trims context and caps tool calls at 5 per answer. For heavy use, switch the agent to Gemini or add a paid key |
+| **Supabase free** | Projects pause after ~1 week with no activity | Unpause from the dashboard; data is kept |
 
 ## Troubleshooting
 
-| Symptom | Cause / fix |
-|---------|-------------|
-| Render build OK, then crash with `connection ... Network is unreachable` or a timeout | Using the direct Supabase host. Switch `DATABASE_URL` to the **Session pooler** string |
-| `password authentication failed` | Wrong password, or the pooler user is missing `.<project-ref>` (`postgres.abcd...`) |
-| Browser console: `blocked by CORS policy` | `CORS_ORIGINS` on Render doesn't exactly match the Vercel URL (check `https://`, no trailing `/`) |
-| Frontend loads but every request 404s / hits `vercel.app/api/...` | `VITE_API_URL` not set on Vercel, or set after the build. Set it and redeploy |
-| "Could not decrypt" / saved credentials stop working | `ENCRYPTION_KEY` changed. Restore the old key, or re-enter credentials |
-| Logged out after the backend restarts | `SECRET_KEY` changed (manual setup without a fixed key). Set a fixed value |
-| First request very slow | Render cold start (see above) |
+| Symptom | Fix |
+|---------|-----|
+| Deploy fails at startup with `Network is unreachable` or a connection timeout | `DATABASE_URL` uses the direct host. Switch to the **Session pooler** string |
+| `password authentication failed` | Wrong password, or the user isn't `postgres.<project-ref>` |
+| Build fails at `npm ci` | `frontend/package-lock.json` is missing from the repo. Commit it |
+| Page loads but shows `{"detail":"Not Found"}` | The frontend build didn't run. Check the build log for the `vite build` step |
+| Saved credentials stop working | `ENCRYPTION_KEY` changed. Restore the old value, or re-enter credentials |
+| Everyone is logged out after a redeploy | Expected only if `SECRET_KEY` changed; the blueprint keeps it fixed |
 
-## Local development (unchanged)
+## Local development
 
 ```bash
 # backend
 cd backend
-cp .env.example .env        # fill in values
+cp .env.example .env          # fill in values
 pip install -r requirements.txt
-python run.py               # http://localhost:8000  (run.py handles the Windows event loop)
+python run.py                 # http://localhost:8000
 
-# frontend (new terminal)
+# frontend (hot reload, new terminal)
 cd frontend
 npm install
-npm run dev                 # http://localhost:5173  (proxies /api to :8000; no VITE_API_URL needed)
+npm run dev                   # http://localhost:5173  (proxies /api to :8000)
 ```
+
+If `frontend/dist` exists (after `npm run build`), the backend also serves the built app at http://localhost:8000. That's exactly what runs on Render.
 
 ## Updating
 
-Push to `main`. Render and Vercel both redeploy automatically.
+Push to `main`. Render rebuilds and redeploys automatically.
+
+## Optional: frontend on a separate host
+
+The frontend still supports `VITE_API_URL` (see `frontend/.env.example`). To host it separately, for example as a Render Static Site or on Vercel:
+- set `VITE_API_URL` to the backend URL when building the frontend;
+- add an env var `CORS_ORIGINS=<frontend URL>` on the backend.

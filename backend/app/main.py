@@ -43,6 +43,12 @@ def create_app() -> FastAPI:
     def health():
         return {"status": "ok"}
 
+    # Single-service deploy: serve the built React app (frontend/dist) from the same origin. Mounted last,
+    # so /api, /files, /health and /docs keep priority. Skipped in dev when there is no build.
+    dist = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+    if os.path.isdir(dist):
+        app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
+
     return app
 
 
