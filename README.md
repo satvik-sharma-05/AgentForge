@@ -2,6 +2,10 @@
 
 A no-code AI agent platform. You create agents, give them tools (built-in or MCP), and chat with them. Risky actions wait for your approval before they run.
 
+**🔗 Live demo: [agentforge-n362.onrender.com](https://agentforge-n362.onrender.com/)**
+
+> Hosted on Render's free tier. If the app has been idle, the first load can take ~30–60 seconds while the server wakes up.
+
 ## Run
 
 ```bash
